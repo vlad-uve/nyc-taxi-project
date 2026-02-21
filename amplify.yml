@@ -5,6 +5,13 @@ applications:
       phases:
         preBuild:
           commands:
+            # Write server-only env vars into .env.production for Next runtime
+            - echo "API_URL=$API_URL" >> .env.production
+            - echo "API_KEY=$API_KEY" >> .env.production
+
+            # Optional quick sanity check to confirm env vars are present during build
+            - node -e "console.log('API_URL present?', !!process.env.API_URL); console.log('API_KEY present?', !!process.env.API_KEY)"
+
             - npm ci
         build:
           commands:
@@ -12,7 +19,7 @@ applications:
       artifacts:
         baseDirectory: .next
         files:
-          - '**/*'
+          - "**/*"
       cache:
         paths:
           - node_modules/**/*
