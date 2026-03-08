@@ -79,7 +79,7 @@ def _openai_extract_text(responses_payload: dict) -> str:
 
 
 def openai_plan(question: str) -> dict:
-    """Calls OpenAI Responses API to return a strict JSON plan (intent/sql/chart/summary)."""
+    """Calls OpenAI Responses API to return a strict JSON plan (intent/sql/chart/summary) for questions only"""
 
     # Lambda level guardrails for openai mo
     model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -123,10 +123,11 @@ Rules:
 - SQL must be a SINGLE Athena/Trino SELECT statement.
 - Use only database: {db}
 - Use only table: {db}.{table}
-- Always include LIMIT 200.
+- Maximum limit is LIMIT 50 if limit -> always enforece LIMIT 50 if not specified.
 - Prefer partition filters on year/month when possible.
 - If the user asks for a plot/chart/graph -> intent MUST be "chart".
 - If intent is "answer", omit the "chart" key entirely.
+- If you compute a field with "AS alias", DO NOT GROUP BY or ORDER BY the alias. Use GROUP BY 1 / ORDER BY 1 (or repeat the full expression).
 """.strip()
 
     # Truncate user questions if exceeding max chars
@@ -196,3 +197,88 @@ User question:
 
     # Return json plan (intent, sql, summary, chart) for downstream processing
     return plan
+
+
+def openai_chart_spec(*, question: str, columns: list[str], sample_rows: list[dict], max_rows: int = 25) -> dict:
+    """
+    Ask OpenAI for a chart spec ONLY, grounded in actual Athena result columns.
+    Returns dict: {"type":..., "x":..., "y":..., "title":...}
+    """
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    temperature = float(os.environ.get("OPENAI_TEMPERATURE", "0"))
+    max_output_tokens = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "600"))
+
+    temp = max(0.0, min(0.2, temperature))
+    max_out = max(64, min(800, max_output_tokens))  # chart spec is small
+
+    # Cap sample rows (don’t send too much)
+    rows = (sample_rows or [])[: max(0, min(max_rows, 50))]
+
+    required_json_schema = """
+Return ONLY valid JSON in this exact shape:
+
+{
+  "type": "bar"|"line"|"scatter"|"histogram"|"box",
+  "x": "column_name",
+  "y": "column_name",
+  "title": "string"
+}
+
+Rules:
+- Output JSON ONLY (no markdown).
+- Use ONLY the provided columns (do not invent names).
+- If type is histogram or box: y may be omitted or set to "" (one-variable chart).
+- Prefer readable titles.
+""".strip()
+
+    user_prompt = f"""
+{required_json_schema}
+
+User question:
+{(question or "").strip()}
+
+Available columns:
+{json.dumps(columns, ensure_ascii=False)}
+
+Sample rows (string values):
+{json.dumps(rows, ensure_ascii=False)}
+""".strip()
+
+    api_key = _get_openai_key()
+
+    payload = {
+        "model": model,
+        "temperature": temp,
+        "max_output_tokens": max_out,
+        "input": [
+            {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]}
+        ],
+    }
+
+    req = urllib.request.Request(
+        url="https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read().decode("utf-8")
+            resp = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"OpenAI HTTPError {e.code}: {err_body}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"OpenAI URLError: {e}")
+
+    text_out = _openai_extract_text(resp)
+    if not text_out:
+        raise ValueError(f"OpenAI returned no text output. Raw: {json.dumps(resp)[:2000]}")
+
+    try:
+        chart = json.loads(text_out)
+    except json.JSONDecodeError:
+        raise ValueError(f"Model did not return valid JSON. Raw output:\n{text_out}")
+
+    return chart

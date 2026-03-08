@@ -6,6 +6,7 @@
 import os
 import time
 import boto3
+import re
 
 #Athena client for AWS
 athena = boto3.client("athena")
@@ -13,7 +14,11 @@ athena = boto3.client("athena")
 # Very small SQL guardrails
 FORBIDDEN = ("insert", "update", "delete", "drop", "alter", "create", "msck", "unload")
 
-#
+# Regex to find the last LIMIT clause and extract the number
+LIMIT_RE = re.compile(r"(?is)\blimit\s+(\d+)\b")
+
+
+# --- Internal helper functions for enforcing LIMIT on SQL
 def _get_results_s3() -> str:
     """Get Athena results S3 path from env"""
     results_s3 = os.environ["ATHENA_RESULTS_S3"]
@@ -23,6 +28,48 @@ def _get_results_s3() -> str:
         results_s3 += "/"
 
     return results_s3
+
+
+def strip_sql_comments(sql: str) -> str:
+    """
+    Remove SQL comments (both -- and /* */) from SQL string.
+    """
+    sql = re.sub(r"--.*?$", "", sql, flags=re.MULTILINE)
+    sql = re.sub(r"/\*[\s\S]*?\*/", "", sql)
+    return sql.strip()
+
+
+def get_last_limit(sql: str) -> int | None:
+    """Extract the last LIMIT clause number from SQL string."""
+    matches = list(LIMIT_RE.finditer(sql))
+    if not matches:
+        return None
+    return int(matches[-1].group(1))
+
+
+def enforce_limit(sql: str, max_limit: int = 50, default_limit: int = 50) -> str:
+    """Enforce a maximum LIMIT clause on SQL string."""
+    s = (sql or "").strip()
+    s = re.sub(r";+\s*$", "", s)          # drop trailing semicolons
+    s_nocomments = strip_sql_comments(s)  # for detection only
+
+    current = get_last_limit(s_nocomments)
+    if current is None:
+        return f"{s}\nLIMIT {default_limit}"
+
+    if current > max_limit:
+        # replace only the LAST limit number (operate on original s)
+        # easiest: replace last occurrence by splitting with finditer spans on original
+        matches = list(LIMIT_RE.finditer(s))
+        if not matches:
+            # fallback: should not happen, but safe
+            return f"{s}\nLIMIT {max_limit}"
+        last = matches[-1]
+        num_span = last.span(1)
+        return s[:num_span[0]] + str(max_limit) + s[num_span[1]:]
+
+    return s
+# ---------------------------------------------------
 
 
 def validate_sql(sql: str) -> str:
@@ -52,9 +99,8 @@ def validate_sql(sql: str) -> str:
         raise ValueError("Query contains forbidden keywords.")
 
     # Enforce a LIMIT if missing (cost control)
-    if " limit " not in lower and not lower.endswith(" limit"):
-        s = s.rstrip() + " LIMIT 200"
-        lower = s.lower()
+    s = enforce_limit(s, max_limit=50, default_limit=50)
+    lower = s.lower()
 
     # Enforce allowlisted tables only (simple string checks; not a full SQL parser)
     if f"{allowed_db.lower()}." in lower:
