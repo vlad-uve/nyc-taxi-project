@@ -1,0 +1,163 @@
+{
+  "database": "nyc_tax_curated",
+  "tables": {
+    "curated_yellow_tripdata": {
+      "description": "NYC TLC Yellow Taxi trip records, curated and partitioned for analytics in Athena.",
+      "grain": "one row per taxi trip",
+      "primary_time_column": "tpep_pickup_datetime",
+      "time_columns": ["tpep_pickup_datetime", "tpep_dropoff_datetime"],
+      "partition_columns": {
+        "vendorid": "string",
+        "year": "string",
+        "month": "string"
+      },
+      "partitions_hint": "Always filter by year and month partitions to reduce Athena scan cost. For this dataset, timeframe is Jan-Jun 2022.",
+      "recommended_default_filter": "year = '2022' AND month IN ('1','2','3','4','5','6')",
+      "columns": {
+        "tpep_pickup_datetime": {
+          "type": "timestamp",
+          "description": "The date and time when the meter was engaged (pickup)."
+        },
+        "tpep_dropoff_datetime": {
+          "type": "timestamp",
+          "description": "The date and time when the meter was disengaged (dropoff)."
+        },
+        "passenger_count": {
+          "type": "double",
+          "description": "Number of passengers reported by the driver."
+        },
+        "trip_distance": {
+          "type": "double",
+          "description": "Trip distance in miles reported by the taximeter."
+        },
+        "ratecodeid": {
+          "type": "double",
+          "description": "Final rate code in effect at the end of the trip.",
+          "enum": {
+            "1": "Standard rate",
+            "2": "JFK",
+            "3": "Newark",
+            "4": "Nassau or Westchester",
+            "5": "Negotiated fare",
+            "6": "Group ride"
+          }
+        },
+        "store_and_fwd_flag": {
+          "type": "string",
+          "description": "Indicates whether the trip record was held in vehicle memory before sending to vendor due to lack of connection.",
+          "enum": {
+            "Y": "Store and forward trip",
+            "N": "Not a store and forward trip"
+          }
+        },
+        "pulocationid": {
+          "type": "bigint",
+          "description": "TLC Taxi Zone ID where the meter was engaged (pickup location)."
+        },
+        "dolocationid": {
+          "type": "bigint",
+          "description": "TLC Taxi Zone ID where the meter was disengaged (dropoff location)."
+        },
+        "payment_type": {
+          "type": "bigint",
+          "description": "Payment type used for the trip.",
+          "enum": {
+            "1": "Credit card",
+            "2": "Cash",
+            "3": "No charge",
+            "4": "Dispute",
+            "5": "Unknown",
+            "6": "Voided trip"
+          }
+        },
+        "fare_amount": {
+          "type": "double",
+          "description": "Time-and-distance fare calculated by the meter."
+        },
+        "extra": {
+          "type": "double",
+          "description": "Miscellaneous extras and surcharges (e.g., peak/overnight)."
+        },
+        "mta_tax": {
+          "type": "double",
+          "description": "MTA tax automatically triggered based on metered rate."
+        },
+        "tip_amount": {
+          "type": "double",
+          "description": "Tip amount (only for credit card tips; cash tips are not included)."
+        },
+        "tolls_amount": {
+          "type": "double",
+          "description": "Total amount of all tolls paid during the trip."
+        },
+        "improvement_surcharge": {
+          "type": "double",
+          "description": "Improvement surcharge assessed on hailed trips."
+        },
+        "total_amount": {
+          "type": "double",
+          "description": "Total amount charged to passengers (does not include cash tips)."
+        },
+        "congestion_surcharge": {
+          "type": "double",
+          "description": "Congestion surcharge for trips in congestion zone when applicable."
+        },
+        "airport_fee": {
+          "type": "double",
+          "description": "Airport fee when applicable."
+        },
+        "vendorid": {
+          "type": "string",
+          "description": "Code indicating the provider that supplied the record.",
+          "enum": {
+            "1": "Creative Mobile Technologies, LLC",
+            "2": "VeriFone Inc."
+          },
+          "is_partition": true
+        },
+        "year": {
+          "type": "string",
+          "description": "Partition year derived from trip data (string in Glue).",
+          "is_partition": true
+        },
+        "month": {
+          "type": "string",
+          "description": "Partition month derived from trip data (string in Glue).",
+          "is_partition": true
+        }
+      },
+      "metrics": {
+        "trip_count": "count(*)",
+        "avg_fare_per_trip": "avg(fare_amount)",
+        "avg_trip_distance": "avg(trip_distance)",
+        "total_revenue": "sum(total_amount)",
+        "total_tips": "sum(tip_amount)",
+        "avg_fare_per_mile": "avg(fare_amount / nullif(trip_distance, 0))",
+        "avg_speed_mph": "avg(trip_distance / nullif(date_diff('second', tpep_pickup_datetime, tpep_dropoff_datetime) / 3600.0, 0))"
+      },
+      "data_quality_rules": {
+        "recommended_clean_filters": [
+          "cast(passenger_count as double) > 0",
+          "trip_distance >= 1",
+          "fare_amount > 0",
+          "total_amount > 0"
+        ],
+        "notes": "If your curated table already applied these rules in Spark/Glue, keep them as optional constraints for the AI."
+      },
+      "chart_guidelines": {
+        "time_series": {
+          "preferred_charts": ["line", "bar"],
+          "x_candidates": ["tpep_pickup_datetime", "year", "month"]
+        },
+        "categorical_breakdown": {
+          "preferred_charts": ["bar"],
+          "category_candidates": ["payment_type", "ratecodeid", "vendorid"]
+        },
+        "distribution": {
+          "preferred_charts": ["histogram", "box"],
+          "numeric_candidates": ["trip_distance", "fare_amount", "tip_amount", "total_amount"]
+        }
+      }
+    }
+  }
+}
