@@ -43,7 +43,7 @@ def ask_manual_sql_mode(*, body: dict, path: str, method: str, event: dict):
     # --- Minimal response shape for UI (always) ---
     ui = {
         "mode": "manual_sql",
-        "question": None,  # keep same UI shape as openai mode
+        "question": None, 
         "intent": None,
         "summary": None,
         "sql": None,
@@ -59,7 +59,7 @@ def ask_manual_sql_mode(*, body: dict, path: str, method: str, event: dict):
         "workgroup": os.environ.get("ATHENA_WORKGROUP", "primary"),
         "outputLocation": os.environ.get("ATHENA_RESULTS_S3"),
         "error_stage": None,
-        "raw_sql": manual_sql,  # raw user input (useful for debugging)
+        "raw_sql": manual_sql,  # raw user input for debugging
     }
 
     sql = None
@@ -88,7 +88,7 @@ def ask_manual_sql_mode(*, body: dict, path: str, method: str, event: dict):
         if sql:
             ui["sql"] = sql
         else:
-            # Optionally return raw SQL to UI on error; comment out if you dislike this
+            # Optionally return raw SQL to UI on error
             ui["sql"] = manual_sql
 
         # Use 400 for validation / user mistakes, 500 for Athena/internal
